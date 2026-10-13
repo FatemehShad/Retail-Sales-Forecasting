@@ -1,0 +1,35 @@
+name: test-and-build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      RETAIL_VENV_DIR: ${{ github.workspace }}/.venv
+      RETAIL_DELTA_DIR: ${{ runner.temp }}/retail-delta
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.lock
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Install pinned dependencies
+        run: bash scripts/setup.sh
+      - name: Run forecasting, Spark/Delta, and CLI tests; build wheel
+        run: bash scripts/test.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: forecasting-wheel
+          path: dist/*.whl

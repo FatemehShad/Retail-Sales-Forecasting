@@ -1,0 +1,71 @@
+bundle:
+  name: retail-sales-forecasting
+
+include:
+  - resources/*.yml
+
+artifacts:
+  forecasting_wheel:
+    type: whl
+    path: .
+    build: python -m build --wheel
+
+variables:
+  catalog:
+    description: Existing Unity Catalog catalog; requires USE CATALOG and CREATE SCHEMA
+    default: workspace
+  schema:
+    description: Dedicated project schema
+    default: retail_forecasting
+  raw_data_path:
+    description: Folder containing the six Kaggle CSVs, in a UC volume or governed abfss location
+    default: /Volumes/${var.catalog}/${var.schema}/raw
+  experiment_path:
+    description: MLflow workspace experiment
+    default: /Users/${workspace.current_user.userName}/retail-sales-forecasting
+  spark_version:
+    default: 16.4.x-scala2.12
+  worker_node_type:
+    default: Standard_D4ds_v5
+  driver_node_type:
+    default: Standard_D8ds_v5
+  worker_count:
+    default: 2
+
+targets:
+  dev:
+    default: true
+    mode: development
+    workspace:
+      host: https://dbc-9b6ad1bb-15c7.cloud.databricks.com
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
+  azure:
+    mode: development
+    # Resolve the Azure workspace via DATABRICKS_HOST or --profile; no AWS host inherited.
+    resources:
+      jobs:
+        retail_forecasting:
+          job_clusters:
+            - job_cluster_key: forecasting_cluster
+              new_cluster:
+                spark_version: ${var.spark_version}
+                node_type_id: ${var.worker_node_type}
+                driver_node_type_id: ${var.driver_node_type}
+                num_workers: ${var.worker_count}
+                data_security_mode: SINGLE_USER
+                spark_conf:
+                  spark.sql.session.timeZone: UTC
+          tasks:
+            - task_key: ingest
+              job_cluster_key: forecasting_cluster
+            - task_key: analytics
+              job_cluster_key: forecasting_cluster
+            - task_key: train
+              job_cluster_key: forecasting_cluster
+            - task_key: forecast
+              job_cluster_key: forecasting_cluster
+  prod:
+    mode: production
+    workspace:
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
+    # Configure a service-principal run identity and permissions before production use.

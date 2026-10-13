@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "retail-sales-forecasting"
+version = "0.1.0"
+description = "Leakage-aware retail sales forecasting for Azure Databricks"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+  "numpy>=1.26,<3",
+  "pandas>=2.2,<3",
+  "lightgbm==4.6.0",
+  "scikit-learn>=1.5,<2",
+  "joblib>=1.4,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8,<10", "ruff>=0.9,<1", "build>=1.2,<2", "setuptools>=75,<81",
+  "wheel>=0.45,<1", "jsonschema>=4,<5", "pyyaml>=6,<7",
+]
+databricks = ["mlflow-skinny>=2.20,<4", "databricks-sdk>=0.50,<1", "pyarrow>=18,<25"]
+spark-test = ["pyspark==3.5.8", "delta-spark==3.3.2"]
+
+[project.scripts]
+retail-forecast = "retail_forecast.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+builtins = ["spark", "dbutils"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+"notebooks/*.py" = ["E402"]  # Notebook cell boundaries deliberately separate imports.

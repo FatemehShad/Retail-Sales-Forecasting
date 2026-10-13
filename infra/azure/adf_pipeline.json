@@ -1,0 +1,224 @@
+{
+  "name": "retail_forecasting_run",
+  "properties": {
+    "parameters": {
+      "databricks_host": {
+        "type": "String"
+      },
+      "workspace_resource_id": {
+        "type": "String"
+      },
+      "job_id": {
+        "type": "Int"
+      }
+    },
+    "variables": {
+      "run_id": {
+        "type": "String"
+      },
+      "run_state": {
+        "type": "String",
+        "defaultValue": "PENDING"
+      },
+      "run_result": {
+        "type": "String",
+        "defaultValue": ""
+      }
+    },
+    "activities": [
+      {
+        "name": "RunDatabricksJob",
+        "type": "WebActivity",
+        "dependsOn": [],
+        "policy": {
+          "timeout": "0.00:02:00",
+          "retry": 0,
+          "retryIntervalInSeconds": 30,
+          "secureOutput": false,
+          "secureInput": true
+        },
+        "typeProperties": {
+          "method": "POST",
+          "url": {
+            "value": "@concat(pipeline().parameters.databricks_host, '/api/2.1/jobs/run-now')",
+            "type": "Expression"
+          },
+          "headers": {
+            "Content-Type": "application/json",
+            "X-Databricks-Azure-Workspace-Resource-Id": {
+              "value": "@pipeline().parameters.workspace_resource_id",
+              "type": "Expression"
+            }
+          },
+          "authentication": {
+            "type": "MSI",
+            "resource": "2ff814a6-3304-4ab8-85cb-cd0e6f879c1d"
+          },
+          "body": {
+            "value": "@concat('{\"job_id\":', string(pipeline().parameters.job_id), ',\"idempotency_token\":\"', pipeline().RunId, '\"}')",
+            "type": "Expression"
+          }
+        }
+      },
+      {
+        "name": "CaptureRunId",
+        "type": "SetVariable",
+        "dependsOn": [
+          {
+            "activity": "RunDatabricksJob",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "typeProperties": {
+          "variableName": "run_id",
+          "value": {
+            "value": "@string(activity('RunDatabricksJob').output.run_id)",
+            "type": "Expression"
+          }
+        }
+      },
+      {
+        "name": "PollDatabricksRun",
+        "type": "Until",
+        "dependsOn": [
+          {
+            "activity": "CaptureRunId",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "typeProperties": {
+          "expression": {
+            "value": "@or(or(equals(variables('run_state'), 'TERMINATED'), equals(variables('run_state'), 'SKIPPED')), equals(variables('run_state'), 'INTERNAL_ERROR'))",
+            "type": "Expression"
+          },
+          "timeout": "0.02:15:00",
+          "activities": [
+            {
+              "name": "GetRun",
+              "type": "WebActivity",
+              "dependsOn": [],
+              "policy": {
+                "timeout": "0.00:02:00",
+                "retry": 2,
+                "retryIntervalInSeconds": 30,
+                "secureOutput": false,
+                "secureInput": true
+              },
+              "typeProperties": {
+                "method": "GET",
+                "url": {
+                  "value": "@concat(pipeline().parameters.databricks_host, '/api/2.1/jobs/runs/get?run_id=', variables('run_id'))",
+                  "type": "Expression"
+                },
+                "headers": {
+                  "Content-Type": "application/json",
+                  "X-Databricks-Azure-Workspace-Resource-Id": {
+                    "value": "@pipeline().parameters.workspace_resource_id",
+                    "type": "Expression"
+                  }
+                },
+                "authentication": {
+                  "type": "MSI",
+                  "resource": "2ff814a6-3304-4ab8-85cb-cd0e6f879c1d"
+                }
+              }
+            },
+            {
+              "name": "CaptureRunState",
+              "type": "SetVariable",
+              "dependsOn": [
+                {
+                  "activity": "GetRun",
+                  "dependencyConditions": [
+                    "Succeeded"
+                  ]
+                }
+              ],
+              "typeProperties": {
+                "variableName": "run_state",
+                "value": {
+                  "value": "@activity('GetRun').output.state.life_cycle_state",
+                  "type": "Expression"
+                }
+              }
+            },
+            {
+              "name": "CaptureRunResult",
+              "type": "SetVariable",
+              "dependsOn": [
+                {
+                  "activity": "CaptureRunState",
+                  "dependencyConditions": [
+                    "Succeeded"
+                  ]
+                }
+              ],
+              "typeProperties": {
+                "variableName": "run_result",
+                "value": {
+                  "value": "@if(contains(activity('GetRun').output.state, 'result_state'), activity('GetRun').output.state.result_state, '')",
+                  "type": "Expression"
+                }
+              }
+            },
+            {
+              "name": "WaitBeforePolling",
+              "type": "Wait",
+              "dependsOn": [
+                {
+                  "activity": "CaptureRunResult",
+                  "dependencyConditions": [
+                    "Succeeded"
+                  ]
+                }
+              ],
+              "typeProperties": {
+                "waitTimeInSeconds": 60
+              }
+            }
+          ]
+        }
+      },
+      {
+        "name": "RequireSuccessfulRun",
+        "type": "IfCondition",
+        "dependsOn": [
+          {
+            "activity": "PollDatabricksRun",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "typeProperties": {
+          "expression": {
+            "value": "@equals(variables('run_result'), 'SUCCESS')",
+            "type": "Expression"
+          },
+          "ifTrueActivities": [],
+          "ifFalseActivities": [
+            {
+              "name": "FailDatabricksRun",
+              "type": "Fail",
+              "typeProperties": {
+                "errorCode": "DatabricksJobFailed",
+                "message": {
+                  "value": "@concat('Databricks run ', variables('run_id'), ' ended in ', variables('run_state'), '/', variables('run_result'))",
+                  "type": "Expression"
+                }
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "annotations": [
+      "retail-sales-forecasting",
+      "managed-identity"
+    ]
+  }
+}

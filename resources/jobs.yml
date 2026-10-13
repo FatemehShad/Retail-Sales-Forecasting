@@ -1,0 +1,51 @@
+resources:
+  jobs:
+    retail_forecasting:
+      name: retail-sales-forecasting-${bundle.target}
+      max_concurrent_runs: 1
+      timeout_seconds: 7200
+      # Deliberately unscheduled: deployment alone never starts billable compute.
+      # No cluster specified: notebook tasks use serverless, suitable for Free Edition.
+      # Each notebook installs pinned runtime dependencies from the synchronized source.
+      tasks:
+        - task_key: ingest
+          notebook_task:
+            notebook_path: ../notebooks/01_ingest.py
+            base_parameters:
+              project_path: ${workspace.file_path}
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              raw_data_path: ${var.raw_data_path}
+        - task_key: analytics
+          depends_on:
+            - task_key: ingest
+          notebook_task:
+            notebook_path: ../notebooks/02_analytics.py
+            base_parameters:
+              project_path: ${workspace.file_path}
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+        - task_key: train
+          depends_on:
+            - task_key: analytics
+          notebook_task:
+            notebook_path: ../notebooks/03_train.py
+            base_parameters:
+              project_path: ${workspace.file_path}
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              experiment_path: ${var.experiment_path}
+              folds: "3"
+              horizon: "16"
+              trees: "400"
+        - task_key: forecast
+          depends_on:
+            - task_key: train
+          notebook_task:
+            notebook_path: ../notebooks/04_forecast.py
+            base_parameters:
+              project_path: ${workspace.file_path}
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              model_path: "{{tasks.train.values.model_path}}"
+              training_run_id: "{{tasks.train.values.training_run_id}}"
